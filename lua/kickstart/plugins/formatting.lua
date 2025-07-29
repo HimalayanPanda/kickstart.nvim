@@ -21,7 +21,7 @@ return {
         notify_format = '[null-ls] %s',
 
         -- This formats the buffers on save
-        on_attach = function(client, bufnr)
+        --[[ on_attach = function(client, bufnr)
           if client.supports_method 'textDocument/formatting' then
             vim.api.nvim_create_autocmd('BufWritePre', {
               buffer = bufnr,
@@ -30,7 +30,7 @@ return {
               end,
             })
           end
-        end,
+        end, ]]
       }
     end,
   },
