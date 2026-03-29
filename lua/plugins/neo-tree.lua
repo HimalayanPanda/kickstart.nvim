@@ -8,6 +8,18 @@ return {
     'MunifTanjim/nui.nvim',
     -- "3rd/image.nvim", -- Optional image support in preview window: See `# Preview Mode` for more information
   },
+  keys = {
+    { '\\', '<cmd>Neotree toggle<cr>', desc = 'Toggle file tree', mode = 'n' },
+    {
+      '|',
+      function()
+        vim.g.neotree_source = vim.g.neotree_source == 'git_status' and 'filesystem' or 'git_status'
+        vim.cmd('Neotree action=focus source=' .. vim.g.neotree_source)
+      end,
+      desc = 'Toggle filesystem/git_status source',
+      mode = 'n',
+    },
+  },
   opts = {
     filesystem = {
       filtered_items = {
@@ -18,32 +30,6 @@ return {
     },
   },
   init = function()
-    vim.api.nvim_create_autocmd('BufAdd', {
-      callback = function()
-        vim.schedule(function()
-          vim.cmd 'Neotree show reveal'
-        end)
-      end,
-    })
-
-    vim.api.nvim_create_autocmd('VimEnter', {
-      once = true,
-      callback = function()
-        vim.api.nvim_create_autocmd('BufEnter', {
-          callback = function(ev)
-            local ft = vim.bo[ev.buf].filetype
-            local buftype = vim.bo[ev.buf].buftype
-            if ft == 'neo-tree' or buftype ~= '' then
-              return
-            end
-            vim.schedule(function()
-              vim.cmd 'Neotree show reveal'
-            end)
-          end,
-        })
-      end,
-    })
-
     vim.api.nvim_create_autocmd('QuitPre', {
       callback = function()
         local wins = vim.api.nvim_list_wins()
@@ -56,7 +42,7 @@ return {
             real_wins = real_wins + 1
           end
         end
-        if real_wins == 1 then
+        if real_wins == 1 and package.loaded['neo-tree'] then
           vim.cmd 'Neotree close'
         end
       end,

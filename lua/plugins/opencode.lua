@@ -1,90 +1,103 @@
+-- Sends context and questions to an opencode instance running in a tmux pane.
+-- No plugin needed — uses tmux send-keys to talk to the existing pane.
 return {
-  'nickjvandyke/opencode.nvim',
-  version = '*', -- Latest stable release
-  dependencies = {
-    {
-      -- `snacks.nvim` integration is recommended, but optional
-      ---@module "snacks" <- Loads `snacks.nvim` types for configuration intellisense
-      'folke/snacks.nvim',
-      optional = true,
-      opts = {
-        input = {}, -- Enhances `ask()`
-        picker = { -- Enhances `select()`
-          actions = {
-            opencode_send = function(...) return require('opencode').snacks_picker_send(...) end,
-          },
-          win = {
-            input = {
-              keys = {
-                ['<CR>'] = { 'opencode_send', mode = { 'n', 'i' } },
-              },
-            },
-          },
-        },
-      },
-    },
-  },
+  dir = vim.fn.stdpath 'config',
+  name = 'opencode-tmux',
+  lazy = false,
   config = function()
-    ---@type opencode.Opts
-    vim.g.opencode_opts = {
-      -- Your configuration, if any; goto definition on the type or field for details
-    }
+    vim.o.autoread = true -- reload buffers when opencode edits files on disk
 
-    vim.o.autoread = true -- Required for `opts.events.reload`
-
-    local opencode_fs = { active = false }
-
-    -- Recommended/example keymaps
-    vim.keymap.set({ 'n', 'x' }, '<C-CR>', function() require('opencode').ask('@this: ', { submit = true }) end, { desc = 'Ask opencode…' })
-    vim.keymap.set({ 'n', 'x' }, "<C-'>", function() require('opencode').select() end, { desc = 'Execute opencode action…' })
-    vim.keymap.set({ 'n', 't' }, "<C-'>", function()
-      require('opencode').toggle()
-      opencode_fs.active = false
-    end, { desc = 'Toggle opencode' })
-
-    vim.keymap.set({ 'n', 'x' }, 'go', function() return require('opencode').operator('@this ') end, { desc = 'Add range to opencode', expr = true })
-    vim.keymap.set('n', 'goo', function() return require('opencode').operator('@this ') .. '_' end, { desc = 'Add line to opencode', expr = true })
-
-    vim.keymap.set('n', '<C-u>', function() require('opencode').command('session.half.page.up') end, { desc = 'Scroll opencode up' })
-    vim.keymap.set('n', '<C-d>', function() require('opencode').command('session.half.page.down') end, { desc = 'Scroll opencode down' })
-    vim.keymap.set('n', '<leader>oc', function() require('opencode').command('prompt.clear') end, { desc = 'Clear opencode input' })
-    vim.keymap.set('n', '<leader>os', function() require('opencode').command('prompt.submit') end, { desc = 'Submit opencode input' })
-    vim.keymap.set('n', '<leader>ot', function() require('opencode').command('agent.cycle') end, { desc = 'Toggle Build/Plan' })
-    vim.keymap.set('n', '<leader>om', function()
-      require('opencode').prompt('/models')
-      vim.defer_fn(function()
-        -- Find and focus the opencode terminal window
-        for _, win in ipairs(vim.api.nvim_list_wins()) do
-          local buf = vim.api.nvim_win_get_buf(win)
-          if vim.bo[buf].buftype == 'terminal' then
-            vim.api.nvim_set_current_win(win)
-            vim.cmd 'startinsert'
-            return
-          end
-        end
-      end, 100)
-    end, { desc = 'Change opencode model' })
-
-    vim.keymap.set('n', '<leader>of', function()
-      for _, win in ipairs(vim.api.nvim_list_wins()) do
-        local buf = vim.api.nvim_win_get_buf(win)
-        if vim.bo[buf].buftype == 'terminal' then
-          if not opencode_fs.active then
-            vim.api.nvim_win_set_width(win, vim.o.columns)
-            opencode_fs.active = true
-          else
-            vim.api.nvim_win_set_width(win, math.floor(vim.o.columns * 0.35))
-            opencode_fs.active = false
-          end
-          vim.api.nvim_set_current_win(win)
-          vim.cmd 'startinsert'
-          return
+    -- Find the pane currently running opencode (searches all panes in all sessions)
+    local function find_pane()
+      local out = vim.fn.system "tmux list-panes -a -F '#{pane_id} #{pane_current_command}' 2>/dev/null"
+      for line in out:gmatch '[^\n]+' do
+        local id, cmd = line:match '^(%S+)%s+(.+)$'
+        if cmd and cmd:match 'opencode' then
+          return id
         end
       end
-    end, { desc = 'Fullscreen opencode panel' })
+      return nil
+    end
 
-    -- You may want these if you use the opinionated `<C-u>` and `<C-d>` keymaps above
-    vim.keymap.set('n', '+', '<C-a>', { desc = 'Increment under cursor', noremap = true })
-    vim.keymap.set('n', '-', '<C-x>', { desc = 'Decrement under cursor', noremap = true })
+    -- Switch tmux focus to the opencode pane
+    local function focus(pane_id)
+      -- Use jobstart (non-blocking) so nvim doesn't recapture focus
+      vim.fn.jobstart({ 'tmux', 'select-pane', '-t', pane_id })
+    end
+
+    -- Type text into the opencode pane (optionally press Enter to submit)
+    local function send(text, submit)
+      local pane = find_pane()
+      if not pane then
+        vim.notify('opencode: no tmux pane found — start opencode in a tmux pane first', vim.log.levels.WARN)
+        return
+      end
+      -- set-buffer runs synchronously so the buffer is ready before paste-buffer fires.
+      -- paste-buffer -p uses bracketed-paste escape sequences, delivering the whole string
+      -- atomically and bypassing TUI key-binding interception (e.g. opencode's @-mention UI).
+      vim.fn.system({ 'tmux', 'set-buffer', '--', text })
+      vim.fn.jobstart({ 'tmux', 'paste-buffer', '-p', '-t', pane }, { detach = true })
+      if submit then
+        vim.defer_fn(function()
+          vim.fn.jobstart({ 'tmux', 'send-keys', '-t', pane, 'Enter' }, { detach = true })
+          vim.defer_fn(function() focus(pane) end, 50)
+        end, 100)
+      else
+        vim.defer_fn(function() focus(pane) end, 50)
+      end
+    end
+
+    -- <leader>aa (normal): ask opencode about the current file
+    vim.keymap.set('n', '<leader>aa', function()
+      local file = vim.api.nvim_buf_get_name(0)
+      if file == '' then
+        vim.notify('opencode: buffer has no file path', vim.log.levels.WARN)
+        return
+      end
+      vim.ui.input({ prompt = 'Ask opencode (@' .. vim.fn.fnamemodify(file, ':t') .. '): ' }, function(q)
+        if q and q ~= '' then
+          vim.schedule(function()
+            send('@' .. file .. ' ' .. q, true)
+          end)
+        end
+      end)
+    end, { desc = '[A]I [A]sk about current file' })
+
+    -- <leader>aa (visual): ask opencode, scoping context to the selected line range
+    vim.keymap.set('x', '<leader>aa', function()
+      local file = vim.api.nvim_buf_get_name(0)
+      if file == '' then
+        vim.notify('opencode: buffer has no file path', vim.log.levels.WARN)
+        return
+      end
+      -- '< and '> are only written on visual-mode exit; read the live selection instead.
+      local s = math.min(vim.fn.line '.', vim.fn.line 'v')
+      local e = math.max(vim.fn.line '.', vim.fn.line 'v')
+      vim.ui.input({ prompt = 'Ask opencode (lines ' .. s .. '-' .. e .. '): ' }, function(q)
+        if q and q ~= '' then
+          vim.schedule(function()
+            send('@' .. file .. ':' .. s .. '-' .. e .. ' ' .. q, true)
+          end)
+        end
+      end)
+    end, { desc = '[A]I [A]sk about selection' })
+
+    -- <leader>ao: drop current file reference into opencode input (no submit)
+    vim.keymap.set('n', '<leader>ao', function()
+      local file = vim.api.nvim_buf_get_name(0)
+      if file ~= '' then
+        send('@' .. file .. ' ', false)
+      end
+    end, { desc = '[A]I send file to [O]pencode context' })
+
+    -- <C-.>: switch tmux focus to the opencode pane
+    vim.keymap.set({ 'n', 't' }, '<C-.>', function()
+      local pane = find_pane()
+      if pane then
+        focus(pane)
+      else
+        vim.notify('opencode: no tmux pane found', vim.log.levels.WARN)
+      end
+    end, { desc = 'Focus opencode tmux pane' })
   end,
 }

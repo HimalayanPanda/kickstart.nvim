@@ -1,16 +1,17 @@
--- AI inline suggestions via minuet-ai (virtual text, Claude backend)
+-- AI inline suggestions via minuet-ai (routed through 9router)
 return {
   'milanglacier/minuet-ai.nvim',
   dependencies = { 'nvim-lua/plenary.nvim' },
   event = 'InsertEnter',
   config = function()
     require('minuet').setup {
-      provider = 'claude',
+      provider = 'openai_compatible',
       provider_options = {
-        claude = {
-          model = 'claude-haiku-4-5',
-          api_key = 'ANTHROPIC_API_KEY',
-          max_tokens = 256,
+        openai_compatible = {
+          model = 'cc/claude-haiku-4-5-20251001',
+          end_point = 'http://localhost:20128/v1/chat/completions',
+          api_key = function() return '9router' end,
+          stream = true,
           optional = {
             max_tokens = 128,
           },

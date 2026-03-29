@@ -39,6 +39,7 @@ return {
     },
 
     spec = {
+      { '<leader>a', group = '[A]I (opencode)', mode = { 'n', 'x' } },
       { '<leader>c', group = '[C]ode', mode = { 'n', 'x' } },
       { '<leader>d', group = '[D]ocument' },
       { '<leader>r', group = '[R]ename' },
