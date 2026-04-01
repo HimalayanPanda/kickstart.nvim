@@ -108,7 +108,7 @@ return {
           vim.api.nvim_create_autocmd('BufWritePre', {
             buffer = event.buf,
             callback = function()
-              vim.lsp.buf.format({ bufnr = event.buf })
+              vim.lsp.buf.format({ bufnr = event.buf, timeout_ms = 2000 })
             end,
           })
         end
